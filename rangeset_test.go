@@ -179,6 +179,8 @@ func TestContainsRange(t *testing.T) {
 		{val: RangeEntry[string]{Start: "zzz.x.", End: "x."}, expected: true},
 		// not in rwrap range, ends with rwrap value
 		{val: RangeEntry[string]{Start: "w.x.", End: "x."}, expected: false},
+		// in the wild
+		{start: []RangeEntry[string]{{Start: "x.", End: "2ajt2.x."}}, val: RangeEntry[string]{Start: "4m4m4.x.", End: "x."}, expected: false},
 	} {
 		start := defaultStart
 		if datum.start != nil {

@@ -49,6 +49,10 @@ func (r *RangeSet[T]) containsI(v T) (int, bool) {
 		return r.Compare(v, r.Ranges[i].End) == -1
 	})
 
+	if i == l {
+		return 0, false
+	}
+
 	rn := r.Ranges[i]
 	start, end := rn.Start, rn.End
 	// value is within the range
