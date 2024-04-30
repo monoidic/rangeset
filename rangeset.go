@@ -94,6 +94,10 @@ func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
 		return r.Compare(newEntry.Start, r.Ranges[i].Start) == -1
 	})
 
+	if startI == l {
+		return startI
+	}
+
 	switch r.Compare(newEntry.Start, r.Ranges[startI].Start) {
 	case -1:
 		// expand left to previous range?
