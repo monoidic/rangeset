@@ -25,7 +25,7 @@ type RangeSet[T any] struct {
 	HasRWrap bool
 }
 
-// helper to check whether a given value exists + return its index
+// helper to check whether a given value is in one of the ranges + return the index of the range
 func (r *RangeSet[T]) containsI(v T) (int, bool) {
 	l := len(r.Ranges)
 
@@ -38,7 +38,7 @@ func (r *RangeSet[T]) containsI(v T) (int, bool) {
 	endWraps := r.HasRWrap && r.Compare(r.Ranges[l-1].End, r.RWrapV) == 0
 
 	// value is in the wrapped area
-	if endWraps && r.Compare(r.Ranges[l-1].Start, v) == 1 {
+	if endWraps && r.Compare(r.Ranges[l-1].Start, v) != 1 {
 		return l - 1, true
 	}
 
@@ -46,13 +46,13 @@ func (r *RangeSet[T]) containsI(v T) (int, bool) {
 		if endWraps && i == l-1 {
 			return true
 		}
-		return r.Compare(v, r.Ranges[i].Start) <= 0
+		return r.Compare(v, r.Ranges[i].End) == -1
 	})
 
 	rn := r.Ranges[i]
 	start, end := rn.Start, rn.End
 	// value is within the range
-	return i, r.Compare(v, end) == -1 && r.Compare(start, v) <= 0
+	return i, r.Compare(v, end) == -1 && r.Compare(start, v) != 1
 }
 
 // check whether a given value is contained within the range set
@@ -87,7 +87,7 @@ func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
 		if endWraps && i == l-1 {
 			return true
 		}
-		return r.Compare(newEntry.Start, r.Ranges[i].Start) <= 0
+		return r.Compare(newEntry.Start, r.Ranges[i].Start) == -1
 	})
 
 	switch r.Compare(newEntry.Start, r.Ranges[startI].Start) {
@@ -97,7 +97,7 @@ func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
 			// cannot expand left
 			break
 		}
-		if r.Compare(newEntry.Start, r.Ranges[startI-1].End) <= 0 {
+		if r.Compare(newEntry.Start, r.Ranges[startI-1].End) != 1 {
 			// merge left
 			startI--
 			newEntry.Start = r.Ranges[startI].Start
@@ -114,22 +114,52 @@ func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
 
 func (r *RangeSet[T]) addEnd(newEntry *RangeEntry[T], endWraps bool) int {
 	l := len(r.Ranges)
-	endI := sort.Search(l, func(i int) bool {
-		if endWraps && i == l-1 {
-			return true
-		}
-		return r.Compare(newEntry.End, r.Ranges[i].End) <= 0
-	})
 
 	if r.HasRWrap && r.Compare(newEntry.End, r.RWrapV) == 0 {
 		return l
 	}
 
-	if endI != l && r.Compare(newEntry.End, r.Ranges[endI].Start) >= 0 {
+	endI := sort.Search(l, func(i int) bool {
+		if endWraps && i == l-1 {
+			return true
+		}
+		return r.Compare(newEntry.End, r.Ranges[i].End) != 1
+	})
+
+	if endI != l && r.Compare(r.Ranges[endI].Start, newEntry.End) != 1 {
 		// connects ranges, simply merge
 		newEntry.End = r.Ranges[endI].End
 		endI++
 	}
 
 	return endI
+}
+
+func (r *RangeSet[T]) ContainsRange(rn RangeEntry[T]) bool {
+	// a range is contained entirely if both the start and end exist
+	// and are contained within the same defined range
+
+	startI, startMatch := r.containsI(rn.Start)
+	if !startMatch {
+		return false
+	}
+
+	l := len(r.Ranges)
+	endWraps := r.HasRWrap && r.Compare(r.Ranges[l-1].End, r.RWrapV) == 0
+	if endWraps && (r.Compare(r.Ranges[l-1].Start, rn.End) == -1 || r.Compare(rn.End, r.RWrapV) == 0) {
+		return startI == l-1
+	}
+
+	endI := sort.Search(l, func(i int) bool {
+		if endWraps && i == l-1 {
+			return true
+		}
+		return r.Compare(rn.End, r.Ranges[i].End) != 1
+	})
+
+	if startI != endI {
+		return false
+	}
+
+	return r.Compare(r.Ranges[endI].Start, rn.End) != 1 && r.Compare(rn.End, r.Ranges[endI].End) != 1
 }

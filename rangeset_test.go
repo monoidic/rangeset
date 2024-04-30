@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
+var defaultStart = []RangeEntry[string]{{"f.x.", "h.x."}, {"m.x.", "t.x."}, {"z.x.", "x."}}
+
 // TODO move these tests to number ranges instead to avoid the import lol
 func TestAddRanges(t *testing.T) {
-	defaultStart := []RangeEntry[string]{{"f.x.", "h.x."}, {"m.x.", "t.x."}, {"z.x.", "x."}}
 	for _, datum := range []struct {
 		start    []RangeEntry[string]
 		in       RangeEntry[string]
@@ -93,9 +94,106 @@ func TestAddRanges(t *testing.T) {
 	}
 }
 
+func TestContains(t *testing.T) {
+	for _, datum := range []struct {
+		start    []RangeEntry[string]
+		val      string
+		expected bool
+	}{
+		// before first
+		{val: "a.x.", expected: false},
+		{val: "b.x.", expected: false},
+		{val: "c.x.", expected: false},
+		// in first
+		{val: "f.x.", expected: true},
+		{val: "g.x.", expected: true},
+		// at end of range
+		{val: "h.x.", expected: false},
+		{val: "t.x.", expected: false},
+		// in second
+		{val: "m.x.", expected: true},
+		{val: "n.x.", expected: true},
+		{val: "s.x.", expected: true},
+		// between first/second
+		{val: "i.x.", expected: false},
+		{val: "j.x.", expected: false},
+		{val: "k.x.", expected: false},
+		// between second/third
+		{val: "u.x.", expected: false},
+		{val: "v.x.", expected: false},
+		{val: "w.x.", expected: false},
+		// in rwrap range
+		{val: "zz.x.", expected: true},
+		{val: "zoo.x.", expected: true},
+	} {
+		start := defaultStart
+		if datum.start != nil {
+			start = datum.start
+		}
+		r := RangeSet[string]{Ranges: slices.Clone(start), Compare: dnsCompare, RWrapV: "x.", HasRWrap: true}
+		if ret := r.Contains(datum.val); ret != datum.expected {
+			t.Errorf("initial data: %v, val: %v, expected: %v, actual: %v", start, datum.val, datum.expected, ret)
+			return
+		}
+	}
+}
+
+func TestContainsRange(t *testing.T) {
+	for _, datum := range []struct {
+		start    []RangeEntry[string]
+		val      RangeEntry[string]
+		expected bool
+	}{
+		// before first
+		{val: RangeEntry[string]{Start: "a.x.", End: "a.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "a.x.", End: "b.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "b.x.", End: "d.x."}, expected: false},
+		// before/in first
+		{val: RangeEntry[string]{Start: "a.x.", End: "f.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "b.x.", End: "g.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "c.x.", End: "h.x."}, expected: false},
+		// in/after first
+		{val: RangeEntry[string]{Start: "g.x.", End: "i.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "f.x.", End: "j.x."}, expected: false},
+		// in first
+		{val: RangeEntry[string]{Start: "f.x.", End: "f.x."}, expected: true},
+		{val: RangeEntry[string]{Start: "f.x.", End: "g.x."}, expected: true},
+		{val: RangeEntry[string]{Start: "g.x.", End: "g.x."}, expected: true},
+		{val: RangeEntry[string]{Start: "g.x.", End: "h.x."}, expected: true},
+		// exact match on end of range
+		{val: RangeEntry[string]{Start: "h.x.", End: "h.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "t.x.", End: "t.x."}, expected: false},
+		// full range match
+		{val: RangeEntry[string]{Start: "f.x.", End: "h.x."}, expected: true},
+		{val: RangeEntry[string]{Start: "m.x.", End: "t.x."}, expected: true},
+		// between ranges
+		{val: RangeEntry[string]{Start: "i.x.", End: "j.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "w.x.", End: "x.x."}, expected: false},
+		// bridges ranges
+		{val: RangeEntry[string]{Start: "g.x.", End: "n.x."}, expected: false},
+		{val: RangeEntry[string]{Start: "n.x.", End: "zz.x."}, expected: false},
+		// in rwrap range
+		{val: RangeEntry[string]{Start: "z.x.", End: "zz.x."}, expected: true},
+		{val: RangeEntry[string]{Start: "zz.x.", End: "zzz.x."}, expected: true},
+		// in rwrap range, ends with rwrap value
+		{val: RangeEntry[string]{Start: "zzz.x.", End: "x."}, expected: true},
+		// not in rwrap range, ends with rwrap value
+		{val: RangeEntry[string]{Start: "w.x.", End: "x."}, expected: false},
+	} {
+		start := defaultStart
+		if datum.start != nil {
+			start = datum.start
+		}
+		r := RangeSet[string]{Ranges: slices.Clone(start), Compare: dnsCompare, RWrapV: "x.", HasRWrap: true}
+		if ret := r.ContainsRange(datum.val); ret != datum.expected {
+			t.Errorf("initial data: %v, val: %v, expected: %v, actual: %v", start, datum.val, datum.expected, ret)
+			return
+		}
+	}
+}
+
 /*
 func TestRemoveRanges(t *testing.T) {
-	defaultStart := []RangeEntry[string]{{"f.x.", "h.x."}, {"m.x.", "t.x."}, {"z.x.", "x."}}
 	for _, datum := range []struct {
 		start    []RangeEntry[string]
 		in       RangeEntry[string]
