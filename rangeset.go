@@ -95,7 +95,8 @@ func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
 	})
 
 	if startI == l {
-		if r.Compare(newEntry.End, r.Ranges[l-1].End) == -1 && r.Compare(r.Ranges[l-1].End, newEntry.Start) == -1 {
+		if r.Compare(r.Ranges[l-1].End, newEntry.Start) == -1 {
+			// range is entirely after last known range
 			return startI
 		}
 		// still interacts with the last range
