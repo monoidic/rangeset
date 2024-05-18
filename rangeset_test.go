@@ -80,7 +80,8 @@ func TestAddRanges(t *testing.T) {
 
 		// found in the wild
 		{start: []RangeEntry[string]{{"x.", "w.x."}, {"xr000.x.", "x."}}, in: RangeEntry[string]{"w.x.", "x."}, expected: []RangeEntry[string]{{"x.", "x."}}},
-		{start: []RangeEntry[string]{{Start: "x.", End: "2ajt2.x."}}, in: RangeEntry[string]{Start: "4m4m4.x.", End: "x."}, expected: []RangeEntry[string]{{Start: "x.", End: "2ajt2.x."}, {Start: "4m4m4.x.", End: "x."}}},
+		{start: []RangeEntry[string]{{"x.", "2ajt2.x."}}, in: RangeEntry[string]{"4m4m4.x.", "x."}, expected: []RangeEntry[string]{{"x.", "2ajt2.x."}, {"4m4m4.x.", "x."}}},
+		{start: []RangeEntry[string]{{"pl.x.", "po.x."}, {"sky.x.", "slap.x."}}, in: RangeEntry[string]{"slap.x.", "slat.x."}, expected: []RangeEntry[string]{{"pl.x.", "po.x."}, {"sky.x.", "slat.x."}}},
 	} {
 		start := defaultStart
 		if datum.start != nil {
