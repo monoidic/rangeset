@@ -3,6 +3,7 @@ package rangeset
 import (
 	"slices"
 	"sort"
+	"sync"
 )
 
 type RangeEntry[T any] struct {
@@ -14,6 +15,8 @@ type RangeEntry[T any] struct {
 type RangeSet[T any] struct {
 	// the merged ranges
 	Ranges []RangeEntry[T]
+	// used in protected calls to make them thread-safe
+	Mux sync.RWMutex
 	// a three-way comparison function like strcmp;
 	// 0 for equality, -1 for v1 < v2, 1 for v1 > v2
 	Compare func(v1, v2 T) int
@@ -65,6 +68,13 @@ func (r *RangeSet[T]) Contains(v T) bool {
 	return ret
 }
 
+// RangeSet.Contains with a critical section
+func (r *RangeSet[T]) ProtectedContains(v T) bool {
+	r.Mux.RLock()
+	defer r.Mux.RUnlock()
+	return r.Contains(v)
+}
+
 // add a range, potentially expanding or merging existing ranges
 func (r *RangeSet[T]) Add(newEntry RangeEntry[T]) {
 	if len(r.Ranges) == 0 {
@@ -83,6 +93,13 @@ func (r *RangeSet[T]) Add(newEntry RangeEntry[T]) {
 	r.Ranges = slices.Delete(r.Ranges, startI, endI)
 	// insert (possibly merged from existing removed ranges) range
 	r.Ranges = slices.Insert(r.Ranges, startI, newEntry)
+}
+
+// RangeSet.Add with a critical section
+func (r *RangeSet[T]) ProtectedAdd(newEntry RangeEntry[T]) {
+	r.Mux.Lock()
+	r.Add(newEntry)
+	r.Mux.Unlock()
 }
 
 func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
@@ -175,4 +192,11 @@ func (r *RangeSet[T]) ContainsRange(rn RangeEntry[T]) bool {
 	}
 
 	return r.Compare(r.Ranges[endI].Start, rn.End) != 1 && r.Compare(rn.End, r.Ranges[endI].End) != 1
+}
+
+// RangeSet.ContainsRange with a critical section
+func (r *RangeSet[T]) ProtectedContainsRange(rn RangeEntry[T]) bool {
+	r.Mux.RLock()
+	defer r.Mux.RUnlock()
+	return r.ContainsRange(rn)
 }
