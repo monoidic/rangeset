@@ -1,9 +1,10 @@
 package rangeset
 
 import (
-	"slices"
 	"sort"
 	"sync"
+
+	"github.com/tidwall/btree"
 )
 
 type RangeEntry[T any] struct {
@@ -14,7 +15,7 @@ type RangeEntry[T any] struct {
 // container for arbitrary ranges of values
 type RangeSet[T any] struct {
 	// the merged ranges
-	Ranges []RangeEntry[T]
+	Ranges *btree.BTreeG[RangeEntry[T]]
 	// used in protected calls to make them thread-safe
 	Mux sync.RWMutex
 	// a three-way comparison function like strcmp;
@@ -26,22 +27,37 @@ type RangeSet[T any] struct {
 	RWrapV T
 	// whether or not there is a "wraparound value" on the right side
 	HasRWrap bool
+	// maybe speeds stuff up idk
+	Hint btree.PathHint
+}
+
+func NewRangeset[T any](compare func(v1, v2 T) int, rwrapV T, hasWrap bool) *RangeSet[T] {
+	less := func(v1, v2 RangeEntry[T]) bool { return compare(v1.Start, v2.Start) == -1 }
+	return &RangeSet[T]{
+		// do not use locks; already handled externally anyhow
+		Ranges:   btree.NewBTreeGOptions(less, btree.Options{NoLocks: true}),
+		RWrapV:   rwrapV,
+		HasRWrap: hasWrap,
+		Compare:  compare,
+	}
 }
 
 // helper to check whether a given value is in one of the ranges + return the index of the range
 func (r *RangeSet[T]) containsI(v T) (int, bool) {
-	l := len(r.Ranges)
+	l := r.Ranges.Len()
 
 	// empty set
 	if l == 0 {
 		return 0, false
 	}
 
+	last := r.checkedGetAt(l - 1)
+
 	// whether or not the end of the last range is the wrap value
-	endWraps := r.HasRWrap && r.Compare(r.Ranges[l-1].End, r.RWrapV) == 0
+	endWraps := r.HasRWrap && r.Compare(last.End, r.RWrapV) == 0
 
 	// value is in the wrapped area
-	if endWraps && r.Compare(r.Ranges[l-1].Start, v) != 1 {
+	if endWraps && r.Compare(last.Start, v) != 1 {
 		return l - 1, true
 	}
 
@@ -49,17 +65,26 @@ func (r *RangeSet[T]) containsI(v T) (int, bool) {
 		if endWraps && i == l-1 {
 			return true
 		}
-		return r.Compare(v, r.Ranges[i].End) == -1
+		return r.Compare(v, r.checkedGetAt(i).End) == -1
 	})
 
 	if i == l {
 		return 0, false
 	}
 
-	rn := r.Ranges[i]
+	rn := r.checkedGetAt(i)
 	start, end := rn.Start, rn.End
 	// value is within the range
-	return i, r.Compare(v, end) == -1 && r.Compare(start, v) != 1
+	// start <= v < end
+	return i, r.Compare(start, v) != 1 && r.Compare(v, end) == -1
+}
+
+func (r *RangeSet[T]) checkedGetAt(i int) RangeEntry[T] {
+	ret, ok := r.Ranges.GetAt(i)
+	if !ok {
+		panic("btree is broken")
+	}
+	return ret
 }
 
 // check whether a given value is contained within the range set
@@ -77,22 +102,41 @@ func (r *RangeSet[T]) ProtectedContains(v T) bool {
 
 // add a range, potentially expanding or merging existing ranges
 func (r *RangeSet[T]) Add(newEntry RangeEntry[T]) {
-	if len(r.Ranges) == 0 {
+	l := r.Ranges.Len()
+	if r.Ranges.Len() == 0 {
 		// first range
-		r.Ranges = []RangeEntry[T]{newEntry}
+		r.Ranges.SetHint(newEntry, &r.Hint)
 		return
 	}
 
 	// whether or not the end of the last range is the wrap value
-	endWraps := r.HasRWrap && r.Compare(r.Ranges[len(r.Ranges)-1].End, r.RWrapV) == 0
+	last := r.checkedGetAt(l - 1)
+	endWraps := r.HasRWrap && r.Compare(last.End, r.RWrapV) == 0
 
 	startI := r.addStart(&newEntry, endWraps)
 	endI := r.addEnd(&newEntry, endWraps)
 
 	// remove (possibly empty) range of values which will be merged
-	r.Ranges = slices.Delete(r.Ranges, startI, endI)
+
+	opts := &btree.DeleteRangeOptions{NoReturn: true}
+
+	if endI == l {
+		opts.MaxInclusive = true
+		endI--
+	}
+
+	if (startI < endI) || (startI == endI && opts.MaxInclusive) {
+		min := r.checkedGetAt(startI)
+		var max RangeEntry[T]
+		if startI == endI {
+			max = min
+		} else {
+			max = r.checkedGetAt(endI)
+		}
+		r.Ranges.DeleteRange(min, max, opts)
+	}
 	// insert (possibly merged from existing removed ranges) range
-	r.Ranges = slices.Insert(r.Ranges, startI, newEntry)
+	r.Ranges.SetHint(newEntry, &r.Hint)
 }
 
 // RangeSet.Add with a critical section
@@ -103,16 +147,16 @@ func (r *RangeSet[T]) ProtectedAdd(newEntry RangeEntry[T]) {
 }
 
 func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
-	l := len(r.Ranges)
+	l := r.Ranges.Len()
 	startI := sort.Search(l, func(i int) bool {
 		if endWraps && i == l-1 {
 			return true
 		}
-		return r.Compare(newEntry.Start, r.Ranges[i].Start) == -1
+		return r.Compare(newEntry.Start, r.checkedGetAt(i).Start) == -1
 	})
 
 	if startI == l {
-		if r.Compare(r.Ranges[l-1].End, newEntry.Start) == -1 {
+		if r.Compare(r.checkedGetAt(l-1).End, newEntry.Start) == -1 {
 			// range is entirely after last known range
 			return startI
 		}
@@ -120,30 +164,32 @@ func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
 		startI--
 	}
 
-	switch r.Compare(newEntry.Start, r.Ranges[startI].Start) {
+	startIv := r.checkedGetAt(startI)
+	switch r.Compare(newEntry.Start, startIv.Start) {
 	case -1:
 		// expand left to previous range?
 		if startI == 0 {
 			// cannot expand left
 			break
 		}
-		if r.Compare(newEntry.Start, r.Ranges[startI-1].End) != 1 {
+		startIprevV := r.checkedGetAt(startI - 1)
+		if r.Compare(newEntry.Start, startIprevV.End) != 1 {
 			// merge left
 			startI--
-			newEntry.Start = r.Ranges[startI].Start
+			newEntry.Start = startIprevV.Start
 		}
 	case 0:
 		// ranges start at same spot, nop
 	case 1:
 		// expand within range
-		newEntry.Start = r.Ranges[startI].Start
+		newEntry.Start = startIv.Start
 	}
 
 	return startI
 }
 
 func (r *RangeSet[T]) addEnd(newEntry *RangeEntry[T], endWraps bool) int {
-	l := len(r.Ranges)
+	l := r.Ranges.Len()
 
 	if r.HasRWrap && r.Compare(newEntry.End, r.RWrapV) == 0 {
 		return l
@@ -153,13 +199,16 @@ func (r *RangeSet[T]) addEnd(newEntry *RangeEntry[T], endWraps bool) int {
 		if endWraps && i == l-1 {
 			return true
 		}
-		return r.Compare(newEntry.End, r.Ranges[i].End) != 1
+		return r.Compare(newEntry.End, r.checkedGetAt(i).End) != 1
 	})
 
-	if endI != l && r.Compare(r.Ranges[endI].Start, newEntry.End) != 1 {
-		// connects ranges, simply merge
-		newEntry.End = r.Ranges[endI].End
-		endI++
+	if endI != l {
+		endV := r.checkedGetAt(endI)
+		if r.Compare(endV.Start, newEntry.End) != 1 {
+			// connects ranges, simply merge
+			newEntry.End = endV.End
+			endI++
+		}
 	}
 
 	return endI
@@ -174,9 +223,11 @@ func (r *RangeSet[T]) ContainsRange(rn RangeEntry[T]) bool {
 		return false
 	}
 
-	l := len(r.Ranges)
-	endWraps := r.HasRWrap && r.Compare(r.Ranges[l-1].End, r.RWrapV) == 0
-	if endWraps && (r.Compare(r.Ranges[l-1].Start, rn.End) == -1 || r.Compare(rn.End, r.RWrapV) == 0) {
+	l := r.Ranges.Len()
+
+	lastV := r.checkedGetAt(l - 1)
+	endWraps := r.HasRWrap && r.Compare(lastV.End, r.RWrapV) == 0
+	if endWraps && (r.Compare(lastV.Start, rn.End) == -1 || r.Compare(rn.End, r.RWrapV) == 0) {
 		return startI == l-1
 	}
 
@@ -184,14 +235,16 @@ func (r *RangeSet[T]) ContainsRange(rn RangeEntry[T]) bool {
 		if endWraps && i == l-1 {
 			return true
 		}
-		return r.Compare(rn.End, r.Ranges[i].End) != 1
+		return r.Compare(rn.End, r.checkedGetAt(i).End) != 1
 	})
 
 	if startI != endI {
 		return false
 	}
 
-	return r.Compare(r.Ranges[endI].Start, rn.End) != 1 && r.Compare(rn.End, r.Ranges[endI].End) != 1
+	endV := r.checkedGetAt(endI)
+	// endV.start <= rn.end <= endV.end
+	return r.Compare(endV.Start, rn.End) != 1 && r.Compare(rn.End, endV.End) != 1
 }
 
 // RangeSet.ContainsRange with a critical section

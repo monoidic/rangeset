@@ -89,10 +89,13 @@ func TestAddRanges(t *testing.T) {
 		if datum.start != nil {
 			start = datum.start
 		}
-		r := RangeSet[string]{Ranges: slices.Clone(start), Compare: dnsCompare, RWrapV: "x.", HasRWrap: true}
+		r := NewRangeset(dnsCompare, "x.", true)
+		for _, v := range start {
+			r.Add(v)
+		}
 		r.Add(datum.in)
-		if !slices.Equal(r.Ranges, datum.expected) {
-			t.Errorf("initial data: %v, input: %v, expected: %v, actual: %v", start, datum.in, datum.expected, r.Ranges)
+		if !slices.Equal(r.Ranges.Items(), datum.expected) {
+			t.Errorf("initial data: %v, input: %v, expected: %v, actual: %v", start, datum.in, datum.expected, r.Ranges.Items())
 			return
 		}
 	}
@@ -134,7 +137,10 @@ func TestContains(t *testing.T) {
 		if datum.start != nil {
 			start = datum.start
 		}
-		r := RangeSet[string]{Ranges: slices.Clone(start), Compare: dnsCompare, RWrapV: "x.", HasRWrap: true}
+		r := NewRangeset(dnsCompare, "x.", true)
+		for _, v := range start {
+			r.Add(v)
+		}
 		if ret := r.Contains(datum.val); ret != datum.expected {
 			t.Errorf("initial data: %v, val: %v, expected: %v, actual: %v", start, datum.val, datum.expected, ret)
 			return
@@ -185,12 +191,17 @@ func TestContainsRange(t *testing.T) {
 		{val: RangeEntry[string]{Start: "w.x.", End: "x."}, expected: false},
 		// in the wild
 		{start: []RangeEntry[string]{{Start: "x.", End: "2ajt2.x."}}, val: RangeEntry[string]{Start: "4m4m4.x.", End: "x."}, expected: false},
+		// empty
+		{start: []RangeEntry[string]{}, val: RangeEntry[string]{Start: "a.x.", End: "b.x."}, expected: false},
 	} {
 		start := defaultStart
 		if datum.start != nil {
 			start = datum.start
 		}
-		r := RangeSet[string]{Ranges: slices.Clone(start), Compare: dnsCompare, RWrapV: "x.", HasRWrap: true}
+		r := NewRangeset(dnsCompare, "x.", true)
+		for _, v := range start {
+			r.Add(v)
+		}
 		if ret := r.ContainsRange(datum.val); ret != datum.expected {
 			t.Errorf("initial data: %v, val: %v, expected: %v, actual: %v", start, datum.val, datum.expected, ret)
 			return
