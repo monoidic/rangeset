@@ -113,6 +113,11 @@ func (r *naiveRangeset[T]) fix() bool {
 	return false
 }
 
+const (
+	START = 2
+	END   = 20
+)
+
 func comprehensiveTest(t *testing.T, num1, num2, num3, num4, num5, num6 uint8) {
 	// 3 pairs of numbers, forming three ranges
 	firsts := []*uint8{&num1, &num3, &num5}
@@ -120,26 +125,16 @@ func comprehensiveTest(t *testing.T, num1, num2, num3, num4, num5, num6 uint8) {
 
 	// clamp starts to range [5, 14]
 	for _, num := range firsts {
-		*num = max(min(14, *num&15), 5)
+		*num = max(min(*num, END-1), START)
 	}
 
 	// clamp ends to range [5, 15], where == 15 gets set to wraparound
 	for _, num := range seconds {
-		*num = max(*num&15, 5)
-		if *num == 15 {
+		*num = max(min(*num, END), START)
+		if *num == END {
 			*num = 0
 		}
 	}
-
-	/*
-		// swap order, if mismatched
-		for i, first := range firsts {
-			second := seconds[i]
-			if *first > *second && *second != 0 {
-				*first, *second = *second, *first
-			}
-		}
-	*/
 
 	rn1 := RangeEntry[uint8]{num1, num2}
 	rn2 := RangeEntry[uint8]{num3, num4}
@@ -154,13 +149,13 @@ func comprehensiveTest(t *testing.T, num1, num2, num3, num4, num5, num6 uint8) {
 	}
 
 	// test contains
-	for i := range uint8(18) {
+	for i := range uint8(END + 2) {
 		if refRangeset.Contains(i) != naive.Contains(i) {
-			t.Fatalf("Contains() mismatch: i: %d, ranges: %v real: %v, naive: %d, real contains: %v, naive contains: %v", i, testRanges, refRangeset.Ranges.Items(), naive.arr, refRangeset.Contains(i), naive.Contains(i))
+			t.Fatalf("Contains() mismatch: i: %d, ranges: %v real: %v, naive: %d, real contains: %v, naive contains: %v", i, testRanges, refRangeset.Items(), naive.arr, refRangeset.Contains(i), naive.Contains(i))
 		}
 	}
 
-	referenceResult := refRangeset.Ranges.Items()
+	referenceResult := refRangeset.Items()
 
 	// add the three ranges in every order and ensure the orders match between both implementations of rangeset
 	for _, order := range [][]int{
@@ -207,12 +202,12 @@ func comprehensiveTest(t *testing.T, num1, num2, num3, num4, num5, num6 uint8) {
 		for _, i := range order {
 			realRangeset.Add(testRanges[i])
 			naive.Add(testRanges[i])
-			if !slices.Equal(realRangeset.Ranges.Items(), naive.arr) {
-				t.Fatalf("intermediate mismatch: i: %d, ranges: %v real: %v, naive: %d", i, testRanges, realRangeset.Ranges.Items(), naive.arr)
+			if !slices.Equal(realRangeset.Items(), naive.arr) {
+				t.Fatalf("intermediate mismatch: i: %d, ranges: %v real: %v, naive: %d", i, testRanges, realRangeset.Items(), naive.arr)
 			}
 		}
 		if !slices.Equal(referenceResult, naive.arr) {
-			t.Fatalf("range addition order dependent mismatch: order %v, ranges %v, reference result %v, got result %v", order, testRanges, referenceResult, realRangeset.Ranges.Items())
+			t.Fatalf("range addition order dependent mismatch: order %v, ranges %v, reference result %v, got result %v", order, testRanges, referenceResult, realRangeset.Items())
 		}
 	}
 }
@@ -223,21 +218,12 @@ func TestAll(t *testing.T) {
 		t.SkipNow()
 	}
 
-	for num1 := 5; num1 < 16; num1++ {
-		for num2 := 5; num2 < 16; num2++ {
-			if num1 > num2 {
-				continue
-			}
-			for num3 := 5; num3 < 16; num3++ {
-				for num4 := 5; num4 < 16; num4++ {
-					if num3 > num4 {
-						continue
-					}
-					for num5 := 5; num5 < 16; num5++ {
-						for num6 := 5; num6 < 16; num6++ {
-							if num5 > num6 {
-								continue
-							}
+	for num1 := START; num1 < END; num1++ {
+		for num2 := num1; num2 < END; num2++ {
+			for num3 := num2; num3 < END; num3++ {
+				for num4 := num3; num4 < END; num4++ {
+					for num5 := num4; num5 < END; num5++ {
+						for num6 := num5; num6 < END; num6++ {
 							comprehensiveTest(t, uint8(num1), uint8(num2), uint8(num3), uint8(num4), uint8(num5), uint8(num6))
 						}
 					}
@@ -335,8 +321,8 @@ func TestAddRanges(t *testing.T) {
 			r.Add(v)
 		}
 		r.Add(datum.in)
-		if !slices.Equal(r.Ranges.Items(), datum.expected) {
-			t.Errorf("initial data: %v, input: %v, expected: %v, actual: %v", start, datum.in, datum.expected, r.Ranges.Items())
+		if !slices.Equal(r.Items(), datum.expected) {
+			t.Errorf("initial data: %v, input: %v, expected: %v, actual: %v", start, datum.in, datum.expected, r.Items())
 			return
 		}
 	}

@@ -1,8 +1,9 @@
 package rangeset
 
 import (
+	"errors"
+	"iter"
 	"sort"
-	"sync"
 
 	"github.com/tidwall/btree"
 )
@@ -16,8 +17,6 @@ type RangeEntry[T any] struct {
 type RangeSet[T any] struct {
 	// the merged ranges
 	Ranges *btree.BTreeG[RangeEntry[T]]
-	// used in protected calls to make them thread-safe
-	Mux sync.RWMutex
 	// a three-way comparison function like strcmp;
 	// 0 for equality, -1 for v1 < v2, 1 for v1 > v2
 	Compare func(v1, v2 T) int
@@ -28,8 +27,10 @@ type RangeSet[T any] struct {
 	// whether or not there is a "wraparound value" on the right side
 	HasRWrap bool
 	// maybe speeds stuff up idk
-	Hint btree.PathHint
+	hint btree.PathHint
 }
+
+var ErrIndex = errors.New("index out of range of RangeSet")
 
 func NewRangeset[T any](compare func(v1, v2 T) int, rwrapV T, hasWrap bool) *RangeSet[T] {
 	less := func(v1, v2 RangeEntry[T]) bool { return compare(v1.Start, v2.Start) == -1 }
@@ -93,19 +94,12 @@ func (r *RangeSet[T]) Contains(v T) bool {
 	return ret
 }
 
-// RangeSet.Contains with a critical section
-func (r *RangeSet[T]) ProtectedContains(v T) bool {
-	r.Mux.RLock()
-	defer r.Mux.RUnlock()
-	return r.Contains(v)
-}
-
 // add a range, potentially expanding or merging existing ranges
 func (r *RangeSet[T]) Add(newEntry RangeEntry[T]) {
 	l := r.Ranges.Len()
 	if r.Ranges.Len() == 0 {
 		// first range
-		r.Ranges.SetHint(newEntry, &r.Hint)
+		r.Ranges.SetHint(newEntry, &r.hint)
 		return
 	}
 
@@ -136,14 +130,7 @@ func (r *RangeSet[T]) Add(newEntry RangeEntry[T]) {
 		r.Ranges.DeleteRange(min, max, opts)
 	}
 	// insert (possibly merged from existing removed ranges) range
-	r.Ranges.SetHint(newEntry, &r.Hint)
-}
-
-// RangeSet.Add with a critical section
-func (r *RangeSet[T]) ProtectedAdd(newEntry RangeEntry[T]) {
-	r.Mux.Lock()
-	r.Add(newEntry)
-	r.Mux.Unlock()
+	r.Ranges.SetHint(newEntry, &r.hint)
 }
 
 func (r *RangeSet[T]) addStart(newEntry *RangeEntry[T], endWraps bool) int {
@@ -247,9 +234,31 @@ func (r *RangeSet[T]) ContainsRange(rn RangeEntry[T]) bool {
 	return r.Compare(endV.Start, rn.End) != 1 && r.Compare(rn.End, endV.End) != 1
 }
 
-// RangeSet.ContainsRange with a critical section
-func (r *RangeSet[T]) ProtectedContainsRange(rn RangeEntry[T]) bool {
-	r.Mux.RLock()
-	defer r.Mux.RUnlock()
-	return r.ContainsRange(rn)
+func (r *RangeSet[T]) Items() []RangeEntry[T] {
+	return r.Ranges.Items()
+}
+
+func (r *RangeSet[T]) Iter() iter.Seq[RangeEntry[T]] {
+	return func(yield func(RangeEntry[T]) bool) {
+		iterator := r.Ranges.Iter()
+		defer iterator.Release()
+		for iterator.Next() {
+			if !yield(iterator.Item()) {
+				return
+			}
+		}
+	}
+}
+
+func (r *RangeSet[T]) Get(idx int) (RangeEntry[T], error) {
+	var err error
+	ret, ok := r.Ranges.GetAt(idx)
+	if !ok {
+		err = ErrIndex
+	}
+	return ret, err
+}
+
+func (r *RangeSet[T]) Len() int {
+	return r.Ranges.Len()
 }
